@@ -7,7 +7,6 @@
 #include <map>
 #include <new>
 #include <random>
-#include <map>
 #include <vector>
 
 #include <unistd.h>
@@ -86,7 +85,7 @@ namespace hw1 {
             for (std::size_t i = 0; i < tests_count; ++i) {
                 double n = 0;
 
-                const std::size_t repeats = 5;
+                const std::size_t repeats = 1;
 
                 shuffle_buffer(buffer, bufsize, step, assoc);
 
@@ -163,24 +162,24 @@ namespace hw1 {
         constexpr std::size_t BUFFER_SIZE = 4 * 1024 * 1024;
 
         constexpr std::size_t MIN_STRIDE = 1024;
-        constexpr std::size_t MAX_STRIDE = 64 * MIN_STRIDE;
+        constexpr std::size_t MAX_STRIDE = 16 * MIN_STRIDE;
 
         constexpr double CACHE_ASSOC_THRESHOLD = 1.2;
-        constexpr double CACHE_SIZE_THRESHOLD = 1.8;
 
         std::size_t *buffer = allocate_aligned_buffer(PAGE_SIZE, BUFFER_SIZE);
 
         /* Cache assoc determining */
 
         std::map<std::size_t, std::size_t> cache_assoc_freq;
+        std::map<std::size_t, std::size_t> cache_size_freq;
 
         for (size_t i = 0; i < REPEATS; ++i) {
-            std::cout << "Round of determining cache associativity " << i + 1 << "/" << REPEATS << " started\n";
+            std::cout << "Round of determining cache size and associativity " << i + 1 << "/" << REPEATS << " started\n";
 
             double prev_dur = 0;
             std::size_t prev_cache_assoc = 0;
 
-            for (std::size_t stride = MIN_STRIDE; stride < MAX_STRIDE; stride *= 2) {
+            for (std::size_t stride = MIN_STRIDE; stride <= MAX_STRIDE; stride *= 2) {
                 prev_dur = 0;
                 prev_cache_assoc = 0;
 
@@ -189,6 +188,7 @@ namespace hw1 {
 
                     if (prev_dur > 0 && prev_dur * CACHE_ASSOC_THRESHOLD < dur) {
                         cache_assoc_freq[prev_cache_assoc]++;
+                        cache_size_freq[stride * prev_cache_assoc]++;
                     }
 
                     prev_dur = dur;
@@ -196,7 +196,19 @@ namespace hw1 {
                 }
             }
 
-            std::cout << "Round of determining cache associativity " << i + 1 << "/" << REPEATS << " finished\n\n";
+            std::cout << "Round of determining cache size and associativity " << i + 1 << "/" << REPEATS << " finished\n\n";
+        }
+
+        delete[] buffer;
+
+        using cache_size_best_result_t = std::pair<std::size_t, std::size_t>;
+        cache_size_best_result_t cache_size_best_result;
+
+        for (auto&& [cache_size, freq]: cache_size_freq) {
+            if (freq > cache_size_best_result.second) {
+                cache_size_best_result.first = cache_size;
+                cache_size_best_result.second = freq;
+            }
         }
 
         using cache_assoc_best_result_t = std::pair<std::size_t, std::size_t>;
@@ -209,43 +221,7 @@ namespace hw1 {
             }
         }
 
-        std::cout << "L1 cache associativity determined\n\n";
-
-        /* Cache size determining */
-
-        std::map<std::size_t, std::size_t> cache_size_freq;
-
-        for (std::size_t i = 0; i < REPEATS; ++i) {
-            std::cout << "Round of determining cache size " << i + 1 << "/" << REPEATS << " started\n";
-
-            double prev_dur = 0;
-
-            for (std::size_t stride = MIN_STRIDE; stride < MAX_STRIDE; stride *= 2) {
-                /* Run test with associativity more than determined to try trigger cache miss */
-                const double dur = run_cache_size_test(buffer, BUFFER_SIZE, stride, cache_assoc_best_result.first + 2);
-                const std::size_t cache_size = stride * cache_assoc_best_result.first;
-
-                if (prev_dur > 0 && prev_dur * CACHE_SIZE_THRESHOLD < dur) {
-                    ++cache_size_freq[cache_size];
-                }
-
-                prev_dur = dur;
-            }
-
-            std::cout << "Round of determining cache size " << i + 1 << "/" << REPEATS << " finished\n\n";
-        }
-
-        using cache_size_best_result_t = std::pair<std::size_t, std::size_t>;
-        cache_size_best_result_t cache_size_best_result;
-
-        for (auto&& [cache_size, freq]: cache_size_freq) {
-            if (freq > cache_size_best_result.second) {
-                cache_size_best_result.first = cache_size;
-                cache_size_best_result.second = freq;
-            }
-        }
-
-        delete[] buffer;
+        std::cout << "L1 cache size and associativity determined\n\n";
 
         return {
             /* .cache_size = */ cache_size_best_result.first,
@@ -289,19 +265,10 @@ namespace hw1 {
 
             if (prev_time > 0) {
                 std::cerr << "[cache-line-info]: " << t.first << " " << t.second << ", k: " << (prev_time / time) << " :: " << (time / prev_time) << '\n';
-            }
 
-            prev_result = t;
-        }
-
-        for (auto &t: cache_line_loop_time) {
-            time_nanos_t prev_time = prev_result.second;
-            time_nanos_t time = t.second;
-
-            if (time * CACHE_LINE_THRESHOLD < prev_time && test_result.cache_line_size == 0) {
-                test_result.cache_line_size = prev_result.first / 2;
-
-                break;
+                if (time * CACHE_LINE_THRESHOLD < prev_time && test_result.cache_line_size == 0) {
+                    test_result.cache_line_size = prev_result.first / 2;
+                }
             }
 
             prev_result = t;
